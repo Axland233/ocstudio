@@ -6,10 +6,11 @@
 use std::path::PathBuf;
 use serde_json::{json, Value};
 
-use crate::{gitmod, projects};
+use crate::{gitmod, projects, sessions::SessionStore};
 
 pub const TOOL_READ: &str = "read_project_file";
 pub const TOOL_WRITE: &str = "write_project_file";
+pub const TOOL_SEARCH: &str = "search_history";
 
 /// 向模型声明的工具 schema(OpenAI function calling 格式)
 pub fn tool_specs() -> Vec<Value> {
@@ -44,6 +45,20 @@ pub fn tool_specs() -> Vec<Value> {
                 }
             }
         }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": TOOL_SEARCH,
+                "description": "在历史对话中检索之前聊过的内容(用户提到很久之前讨论的细节、当前上下文看不到时用)。关键词尽量用用户的原话,会自动分词匹配。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "想找的细节描述或关键词" }
+                    },
+                    "required": ["query"]
+                }
+            }
+        }),
     ]
 }
 
@@ -51,6 +66,8 @@ pub fn tool_specs() -> Vec<Value> {
 pub struct ToolCtx {
     pub project_dir: PathBuf,
     pub author: String,
+    /// session 存储根目录(历史检索用)
+    pub sessions_root: PathBuf,
 }
 
 /// 校验文件名在白名单内(防穿越/防写非设定文件)
@@ -111,6 +128,24 @@ pub fn execute(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, String
                 "已固化到 {name} 并提交(commit {hash}):{commit_msg}"
             ))
         }
+        TOOL_SEARCH => {
+            let query = args
+                .get("query")
+                .and_then(|q| q.as_str())
+                .ok_or("缺少 query 参数")?;
+            do_search(ctx, query)
+        }
         _ => Err(format!("未知工具: {name}")),
+    }
+}
+
+/// search_history 工具实现(独立,避免 execute 分支过长)
+fn do_search(ctx: &ToolCtx, query: &str) -> Result<String, String> {
+    let store = SessionStore::new(ctx.sessions_root.clone());
+    let hits = store.search(query, 5);
+    if hits.is_empty() {
+        Ok("历史对话中没有检索到相关内容,可尝试其他关键词,或读取设定集文件确认。".into())
+    } else {
+        Ok(format!("检索到 {} 条相关历史(按相关度排序):\n\n{}", hits.len(), hits.join("\n\n---\n\n")))
     }
 }

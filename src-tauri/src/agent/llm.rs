@@ -1,12 +1,22 @@
-//! LLM 网络层:调用 OpenAI 兼容的 /chat/completions(stream=true),
-//! 解析 SSE 流,把增量文本与 tool_calls 片段累积出来。
+//! LLM 网络层:调用 OpenAI 兼容的 /chat/completions。
+//! - chat_stream: 流式(SSE),带 usage(stream_options.include_usage)
+//! - chat_simple: 非流式,用于"总结本会话"等后台任务
 //!
-//! 不依赖官方 SDK——协议就是一次 POST + SSE 行解析,自己写最薄。
+//! usage 是会话滚动与 token 展示的主计量来源。
 
 use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::agent::AgentEvent;
+
+/// 单次请求的 token 用量(OpenAI 兼容 usage 字段)
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct Usage {
+    pub prompt_tokens: u64,     // 输入(含历史/system/tools)= 窗口占用
+    pub completion_tokens: u64, // 输出
+    pub total_tokens: u64,      // 计费量 = prompt + completion
+}
 
 /// 累积中的一条 tool_call(stream 模式 delta 按 index 分片到达)
 #[derive(Debug, Clone, Default)]
@@ -25,6 +35,8 @@ pub struct TurnResult {
     pub content: String,
     /// 模型要调用的工具(空 = 本轮结束)
     pub tool_calls: Vec<PendingToolCall>,
+    /// 本次请求的真实用量(服务商返回才 Some)
+    pub usage: Option<Usage>,
 }
 
 /// 修正 base_url:允许用户填带或不带 /v1 的地址
@@ -38,8 +50,8 @@ fn chat_url(base: &str) -> String {
 }
 
 /// 发起一轮流式请求。
-/// messages: OpenAI 格式历史消息(含 tools 与 tool 结果);tools: 工具定义。
-/// 每个增量文本通过 `emit` 回调推送(供 Channel 转发);函数返回完整结果。
+/// messages: OpenAI 格式历史消息;tools: 工具定义。
+/// 每个增量文本通过 `emit` 回调推送;函数返回完整结果(含 usage)。
 pub async fn chat_stream(
     client: &reqwest::Client,
     base_url: &str,
@@ -53,6 +65,8 @@ pub async fn chat_stream(
         "model": model,
         "messages": messages,
         "stream": true,
+        // 流式响应默认不带 usage,必须显式请求(最后多一个 usage chunk)
+        "stream_options": { "include_usage": true },
     });
     if !tools.is_empty() {
         body["tools"] = Value::Array(tools);
@@ -78,6 +92,7 @@ pub async fn chat_stream(
     let mut content = String::new();
     let mut tool_calls: Vec<PendingToolCall> = Vec::new();
     let mut finish_reason: Option<String> = None;
+    let mut usage: Option<Usage> = None;
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("读取流失败: {e}"))?;
@@ -100,6 +115,12 @@ pub async fn chat_stream(
                         break;
                     }
                     if let Ok(v) = serde_json::from_str::<Value>(data) {
+                        // usage chunk:choices 为空但带 usage
+                        if usage.is_none() {
+                            usage = v
+                                .get("usage")
+                                .and_then(|u| serde_json::from_value::<Usage>(u.clone()).ok());
+                        }
                         parse_delta(&v, &mut emit, &mut content, &mut tool_calls, &mut finish_reason);
                     }
                 }
@@ -113,7 +134,54 @@ pub async fn chat_stream(
         }
     }
 
-    Ok(TurnResult { content, tool_calls })
+    Ok(TurnResult {
+        content,
+        tool_calls,
+        usage,
+    })
+}
+
+/// 非流式调用(后台任务:如"总结本会话")。不做工具、不流式,返回文本 + usage。
+pub async fn chat_simple(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    messages: Vec<Value>,
+    max_tokens: Option<u64>,
+) -> Result<(String, Option<Usage>), String> {
+    let mut body = json!({
+        "model": model,
+        "messages": messages,
+    });
+    if let Some(mt) = max_tokens {
+        body["max_tokens"] = json!(mt);
+    }
+
+    let resp = client
+        .post(chat_url(base_url))
+        .bearer_auth(api_key)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("API 错误 {status}: {}", truncate(&text, 300)));
+    }
+
+    let v: Value = resp.json().await.map_err(|e| format!("解析响应失败: {e}"))?;
+    let content = v
+        .pointer("/choices/0/message/content")
+        .and_then(|c| c.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let usage = v
+        .get("usage")
+        .and_then(|u| serde_json::from_value::<Usage>(u.clone()).ok());
+    Ok((content, usage))
 }
 
 /// 解析一个 SSE data 的 JSON delta
@@ -147,7 +215,10 @@ fn parse_delta(
         for call in calls {
             let index = call.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
             while tool_calls.len() <= index {
-                tool_calls.push(PendingToolCall { index: tool_calls.len(), ..Default::default() });
+                tool_calls.push(PendingToolCall {
+                    index: tool_calls.len(),
+                    ..Default::default()
+                });
             }
             let slot = &mut tool_calls[index];
             if let Some(id) = call.get("id").and_then(|i| i.as_str()) {

@@ -16,6 +16,14 @@ pub struct LlmConfig {
     pub base_url: String, // 例: https://api.deepseek.com/v1 (不含 /chat/completions)
     pub api_key: String,
     pub model: String,    // 例: deepseek-chat
+    /// 模型上下文窗口(token)。用户按官方文档填,默认 128K。
+    /// 用于会话滚动判断:usage >= 70% × 窗口 时自动开新 session。
+    #[serde(default = "default_context_window")]
+    pub context_window: u64,
+}
+
+fn default_context_window() -> u64 {
+    131_072
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

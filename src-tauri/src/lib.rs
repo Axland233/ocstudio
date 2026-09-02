@@ -1,32 +1,81 @@
 //! OC Studio — Tauri 入口 + IPC commands
 //!
 //! 前端(WebView)通过 invoke 调用这些 command;流式对话走 Channel 事件。
+//! 会话体系(用户"无限脑洞画板"哲学):
+//!   - 每个工程一个会话目录(app_data/sessions/<工程>),JSONL 持久化,退出不丢
+//!   - 用量以 API usage 为准(本地估算兜底),usage ≥ 70% × 窗口时静默滚动:
+//!     后端总结本 session -> 开新 session(摘要+最近3条seed),前端无感
 
 mod agent;
 mod gitmod;
 mod projects;
+mod sessions;
 mod settings;
+mod tokenizer;
 
+use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{ipc::Channel, State};
+use serde::Serialize;
+use serde_json::Value;
+use tauri::{ipc::Channel, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 use agent::AgentEvent;
+use sessions::SessionStore;
 use settings::AppSettings;
 
-/// 当前打开的工程(含对话历史;切换工程即重置历史)
+/// 当前打开的工程(含当前 session 的消息;切换工程即切换)
 #[derive(Clone)]
 struct ActiveProject {
     name: String,
     desc: String,
     author: String,
     dir: std::path::PathBuf,
-    history: Vec<serde_json::Value>,
+    /// 当前 session 消息(内存缓存;增量写回 jsonl)
+    history: Vec<Value>,
+    /// 当前 session 序号
+    session_seq: u64,
+    /// 当前 session 摘要(滚动产生;注入 system)
+    summary: Option<String>,
 }
 
 struct AppState {
     active: Mutex<Option<ActiveProject>>,
     http: reqwest::Client,
+}
+
+/// 会话根目录:app_data/sessions/<工程名>
+fn sessions_root(app: &tauri::AppHandle, project: &str) -> PathBuf {
+    app.path()
+        .app_data_dir()
+        .expect("app data dir")
+        .join("sessions")
+        .join(project)
+}
+
+/// 打开/新建工程后:初始化并加载该工程的最新 session 到 active
+fn activate_project(
+    state: &State<'_, AppState>,
+    app: &tauri::AppHandle,
+    info: &projects::ProjectInfo,
+) -> Result<(), String> {
+    let store = SessionStore::new(sessions_root(app, &info.name));
+    store.ensure_first()?;
+    let (seq, summary, history) = match store.load_latest()? {
+        Some((seq, summary, messages)) => (seq, summary, messages),
+        None => (1, None, vec![]),
+    };
+    let mut guard = state.active.lock().map_err(|e| e.to_string())?;
+    *guard = Some(ActiveProject {
+        name: info.name.clone(),
+        desc: info.desc.clone(),
+        author: info.author.clone(),
+        dir: PathBuf::from(&info.path),
+        history,
+        session_seq: seq,
+        summary,
+    });
+    Ok(())
 }
 
 // ---------------------------------------------------------------- commands
@@ -37,7 +86,7 @@ fn bootstrap(app: tauri::AppHandle) -> Result<AppSettings, String> {
     Ok(settings::load(&app))
 }
 
-/// 保存 LLM 配置(base_url/api_key/model),同时标记引导完成
+/// 保存 LLM 配置(base_url/api_key/model/context_window),同时标记引导完成
 #[tauri::command]
 fn save_llm(app: tauri::AppHandle, llm: settings::LlmConfig) -> Result<AppSettings, String> {
     let mut s = settings::load(&app);
@@ -103,7 +152,7 @@ fn create_project(
 ) -> Result<projects::ProjectInfo, String> {
     let s = settings::load(&app);
     let info = projects::create_project(&app, &s, &name, &desc, &author)?;
-    set_active(&state, &info);
+    activate_project(&state, &app, &info)?;
     Ok(info)
 }
 
@@ -114,7 +163,7 @@ fn list_projects(app: tauri::AppHandle) -> Result<Vec<projects::ProjectInfo>, St
     projects::list_projects(&app, &s)
 }
 
-/// 打开工程(设为当前,重置对话历史),返回完整视图
+/// 打开工程(设为当前,恢复最新 session),返回完整视图
 #[tauri::command]
 fn open_project(
     app: tauri::AppHandle,
@@ -123,7 +172,7 @@ fn open_project(
 ) -> Result<projects::ProjectView, String> {
     let s = settings::load(&app);
     let info = projects::open_project(&app, &s, &name)?;
-    set_active(&state, &info);
+    activate_project(&state, &app, &info)?;
     let files = projects::read_files(&app, &s, &name)?;
     Ok(projects::ProjectView { info, files })
 }
@@ -141,6 +190,34 @@ fn current_project(
     let info = projects::open_project(&app, &s, &active.name)?;
     let files = projects::read_files(&app, &s, &active.name)?;
     Ok(Some(projects::ProjectView { info, files }))
+}
+
+/// 历史消息(打开工程后前端拉取渲染当前 session)
+#[derive(Serialize)]
+struct ChatMsgView {
+    role: String,
+    content: String,
+}
+
+#[tauri::command]
+fn chat_history(state: State<'_, AppState>) -> Result<Vec<ChatMsgView>, String> {
+    let active = require_active(&state)?;
+    let mut out = Vec::new();
+    for m in &active.history {
+        let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("?").to_string();
+        let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
+        if content.trim().is_empty() {
+            continue; // 纯工具调用的 assistant 消息不展示
+        }
+        // tool 消息是给模型看的原始结果(可能很长),只留首行给 UI
+        let view_content = if role == "tool" {
+            content.lines().next().unwrap_or("").chars().take(120).collect()
+        } else {
+            content.to_string()
+        };
+        out.push(ChatMsgView { role, content: view_content });
+    }
+    Ok(out)
 }
 
 /// 当前工程 git 提交历史
@@ -171,11 +248,12 @@ fn set_remote(
     let s = settings::load(&app);
     let active = require_active(&state)?;
     let info = projects::set_remote(&app, &s, &active.name, &remote_url, &active.author)?;
-    set_active(&state, &info);
+    activate_project(&state, &app, &info)?;
     Ok(info)
 }
 
-/// 发送一条用户消息给 agent,事件经 channel 流式回前端
+/// 发送一条用户消息给 agent,事件经 channel 流式回前端。
+/// 结束后:消息落盘、token 累计、必要时静默滚动 session(全部后端完成)
 #[tauri::command]
 async fn chat_send(
     app: tauri::AppHandle,
@@ -187,53 +265,72 @@ async fn chat_send(
     if s.llm.base_url.trim().is_empty() || s.llm.api_key.trim().is_empty() {
         return Err("请先在设置中填写 API 地址与密钥".into());
     }
+    let context_window = s.llm.context_window.max(4096); // 防手滑填太小
 
     // 快照当前工程上下文(锁内取,锁外 await)
     let active = require_active(&state)?;
+    let store = SessionStore::new(sessions_root(&app, &active.name));
     let mut history = {
         let mut guard = state.active.lock().map_err(|e| e.to_string())?;
         guard.as_mut().unwrap().take_history()
     };
+    let len_before = history.len();
+    let session_seq = active.session_seq;
+    let summary = active.summary.clone();
 
     let ctx = agent::AgentCtx {
         llm_base_url: s.llm.base_url,
         llm_api_key: s.llm.api_key,
         llm_model: s.llm.model,
-        project_name: active.name,
-        project_desc: active.desc,
-        author: active.author,
-        project_dir: active.dir,
+        project_name: active.name.clone(),
+        project_desc: active.desc.clone(),
+        author: active.author.clone(),
+        project_dir: active.dir.clone(),
+        summary,
+        total_so_far: store.total_tokens(),
+        sessions_root: store.root().to_path_buf(),
     };
 
     let emit = move |ev: AgentEvent| {
         let _ = channel.send(ev);
     };
 
-    let result = agent::run_conversation(&state.http, &ctx, &mut history, &text, &emit).await;
+    let stats = agent::run_conversation(&state.http, &ctx, &mut history, &text, &emit).await?;
 
-    // 写回历史
+    // ---- 落盘 + 累计(后端完成,前端无感) ----
+    store.append_messages(session_seq, &history[len_before..])?;
+    if stats.turn_total_tokens > 0 {
+        let _ = store.add_tokens(stats.turn_total_tokens);
+    }
+
+    // ---- 滚动判断:窗口占用 ≥ 70% × context_window ----
+    let mut new_seq = session_seq;
+    let mut new_summary = ctx.summary.clone();
+    let roll_threshold = (context_window * 7) / 10;
+    if stats.window_prompt_tokens >= roll_threshold {
+        if let Ok((seq, sum)) = agent::roll_session(&state.http, &ctx, &store, &history).await {
+            new_seq = seq;
+            new_summary = Some(sum);
+            // 内存 history 与文件对齐 = 新 session 内容(meta+seed)
+            if let Ok(Some((_, _, msgs))) = store.load_latest() {
+                history = msgs;
+            }
+        }
+    }
+
+    // 写回 active(锁内短操作)
     if let Ok(mut guard) = state.active.lock() {
         if let Some(a) = guard.as_mut() {
+            a.session_seq = new_seq;
+            a.summary = new_summary;
             a.restore_history(history);
         }
     }
-    let _ = app; // app 参数保留,便于以后扩展(如桌面通知)
-    result
+    let _ = app;
+    Ok(())
 }
 
 // ---------------------------------------------------------------- helpers
-
-fn set_active(state: &State<'_, AppState>, info: &projects::ProjectInfo) {
-    if let Ok(mut guard) = state.active.lock() {
-        *guard = Some(ActiveProject {
-            name: info.name.clone(),
-            desc: info.desc.clone(),
-            author: info.author.clone(),
-            dir: std::path::PathBuf::from(&info.path),
-            history: Vec::new(),
-        });
-    }
-}
 
 fn require_active(state: &State<'_, AppState>) -> Result<ActiveProject, String> {
     state
@@ -245,10 +342,10 @@ fn require_active(state: &State<'_, AppState>) -> Result<ActiveProject, String> 
 }
 
 impl ActiveProject {
-    fn take_history(&mut self) -> Vec<serde_json::Value> {
+    fn take_history(&mut self) -> Vec<Value> {
         std::mem::take(&mut self.history)
     }
-    fn restore_history(&mut self, h: Vec<serde_json::Value>) {
+    fn restore_history(&mut self, h: Vec<Value>) {
         self.history = h;
     }
 }
@@ -274,6 +371,7 @@ pub fn run() {
             list_projects,
             open_project,
             current_project,
+            chat_history,
             git_log,
             git_diff,
             set_remote,
