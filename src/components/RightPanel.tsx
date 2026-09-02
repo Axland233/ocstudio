@@ -1,43 +1,25 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
-import type { CommitInfo, FileDiff, ProjectView } from '../lib/types';
+import type { CommitInfo, ProjectView } from '../lib/types';
 import { MdView } from './MdView';
+import { DiffDialog } from './DiffDialog';
 
-const KIND_LABEL: Record<string, string> = { A: '新增', M: '修改', D: '删除', R: '重命名' };
-
-/** 右侧栏:上半设定集浏览 / 下半 git 提交历史 + 逐行 diff */
+/** 右侧栏:上半设定集浏览 / 下半 git 提交历史(点提交开独立 diff 弹窗阅读) */
 export function RightPanel({ project }: { project: ProjectView }) {
   const [tab, setTab] = useState<'files' | 'history'>('history');
   const [fileIdx, setFileIdx] = useState(0);
   const [log, setLog] = useState<CommitInfo[]>([]);
-  const [diff, setDiff] = useState<FileDiff[] | null>(null);
-  const [diffTarget, setDiffTarget] = useState<string | null>(null);
-  const [openFile, setOpenFile] = useState<string | null>(null);
-  const [loadingDiff, setLoadingDiff] = useState(false);
+  const [activeCommit, setActiveCommit] = useState<string | null>(null);
+  // diff 弹窗内容(commit + 与上一提交对比的 older id)
+  const [dlg, setDlg] = useState<{ commit: CommitInfo; olderId: string | null } | null>(null);
 
-  // 工程变化后刷新
+  // 工程变化后刷新历史
   useEffect(() => {
     setFileIdx(0);
-    setDiff(null);
-    setDiffTarget(null);
-    setOpenFile(null);
+    setActiveCommit(null);
+    setDlg(null);
     api.gitLog().then(setLog).catch(console.error);
   }, [project.info.name, project.info.updated_at]);
-
-  async function showDiff(commit: CommitInfo, index: number) {
-    const older = log[index + 1]?.id ?? null; // 与上一个提交比较
-    setDiffTarget(commit.id);
-    setDiff(null);
-    setOpenFile(null);
-    setLoadingDiff(true);
-    try {
-      setDiff(await api.gitDiff(older, commit.id));
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingDiff(false);
-    }
-  }
 
   const file = project.files[fileIdx];
 
@@ -78,9 +60,13 @@ export function RightPanel({ project }: { project: ProjectView }) {
             {log.map((c, i) => (
               <button
                 key={c.id}
-                className={diffTarget === c.id ? 'rp-commit active' : 'rp-commit'}
-                onClick={() => void showDiff(c, i)}
+                className={activeCommit === c.id ? 'rp-commit active' : 'rp-commit'}
                 title={c.message}
+                onClick={() => {
+                  setActiveCommit(c.id);
+                  // 独立弹窗阅读 diff(与上一个提交对比;首个提交对比空树)
+                  setDlg({ commit: c, olderId: log[i + 1]?.id ?? null });
+                }}
               >
                 <span className="commit-hash">{c.id}</span>
                 <span className="commit-msg">{c.message}</span>
@@ -89,51 +75,12 @@ export function RightPanel({ project }: { project: ProjectView }) {
                 </span>
               </button>
             ))}
-          </div>
-          <div className="rp-diff">
-            {loadingDiff && <div className="rp-empty">加载 diff…</div>}
-            {!loadingDiff && diffTarget && !diff && <div className="rp-empty">无变更</div>}
-            {diff && diff.length === 0 && <div className="rp-empty">该提交无文件变更</div>}
-            {diff && diff.length > 0 && (
-              <>
-                <div className="rp-diff-file-list">
-                  {diff.map((d) => (
-                    <button
-                      key={d.path}
-                      className={openFile === d.path ? 'rp-diff-file active' : 'rp-diff-file'}
-                      onClick={() => setOpenFile(openFile === d.path ? null : d.path)}
-                    >
-                      <span className={`diff-kind diff-${d.kind.toLowerCase()}`}>{d.kind}</span>
-                      <span className="rp-diff-file-name">{d.path}</span>
-                      <span className="rp-diff-file-stats">
-                        +{d.lines.filter((l) => l.kind === 'add').length}
-                        {' '}-{d.lines.filter((l) => l.kind === 'del').length}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                {openFile && (() => {
-                  const fd = diff.find((d) => d.path === openFile);
-                  if (!fd) return null;
-                  return (
-                    <div className="rp-diff-lines">
-                      <div className="rp-diff-lines-title">{fd.path}({KIND_LABEL[fd.kind] ?? fd.kind})</div>
-                      {fd.lines.map((l, i) => (
-                        <div key={i} className={`dl ${l.kind}`}>
-                          <span className="dl-no">{l.old_no ?? ''}</span>
-                          <span className="dl-no">{l.new_no ?? ''}</span>
-                          <span className="dl-mark">{l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '}</span>
-                          <span className="dl-text">{l.text || ' '}</span>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })()}
-              </>
-            )}
+            {log.length > 0 && <div className="rp-empty hint-click">点击提交在弹窗中查看完整 diff</div>}
           </div>
         </div>
       )}
+
+      {dlg && <DiffDialog commit={dlg.commit} olderId={dlg.olderId} onClose={() => setDlg(null)} />}
     </div>
   );
 }

@@ -26,7 +26,8 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 4. 大体积字体源目录(fonts/)不监视:避免 EBUSY 崩溃(运行时字体已拷入 public/fonts)
+      ignored: ["**/src-tauri/**", "**/fonts/**", "**/target/**"],
     },
   },
 }));

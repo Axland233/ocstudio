@@ -1,5 +1,36 @@
 /* ============ MindOC 全局样式(Material 3 tokens) ============ */
 
+/* Material Symbols Rounded 图标字体(项目内 fonts/,ligature 渲染) */
+@font-face {
+  font-family: 'Material Symbols Rounded';
+  src: url('/fonts/MaterialSymbolsRounded.ttf') format('truetype');
+  font-style: normal;
+  font-display: block;
+}
+.md-icon {
+  font-family: 'Material Symbols Rounded';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  flex: none;
+}
+.md-icon.small {
+  font-size: 18px;
+}
+.md-icon.tiny {
+  font-size: 14px;
+}
+
 :root {
   /* 兜底 token(主题脚本应用前/后都会覆盖) */
   --md-sys-color-primary: #6750a4;
@@ -39,6 +70,12 @@
 
 * {
   box-sizing: border-box;
+  /* 无限画板哲学:滚动条影响观感,全部隐藏(滚动功能保留) */
+  scrollbar-width: none;      /* Firefox */
+  -ms-overflow-style: none;   /* 旧 Edge/IE */
+}
+*::-webkit-scrollbar {
+  display: none;              /* Chromium / WebView2 */
 }
 
 html,
@@ -106,7 +143,9 @@ body {
   padding: 0;
   background: transparent;
   color: var(--md-sys-color-on-surface-variant);
-  font-size: 20px;
+}
+.icon-btn .md-icon {
+  font-size: 22px; /* icon-btn 内图标略收,配合 40px 触控区 */
 }
 .icon-btn:hover {
   background: var(--md-sys-color-surface-container-high);
@@ -184,9 +223,11 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 12px;
-  background: var(--md-sys-color-surface-container);
-  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  padding: 0 8px;
+  /* 一体感:无填充色块、无边框(顶部渐变阴影落在聊天列,见 .chat-col::before) */
+  background: transparent;
+  border-bottom: none;
+  position: relative;
   z-index: 5;
 }
 .topbar-project {
@@ -224,6 +265,19 @@ body {
   flex: 2 2 0;
   min-width: 0;
   display: flex;
+  position: relative;
+}
+/* 顶部渐变阴影:只覆盖聊天列(到右侧 Git 记录分栏为止),向下渐隐 */
+.chat-col::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 14px;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0));
 }
 .side-col {
   flex: 1 1 0;
@@ -310,11 +364,22 @@ body {
 }
 .msg-error {
   justify-content: flex-start;
+  align-items: center;
+  gap: 6px;
   color: var(--md-sys-color-error);
   background: var(--md-sys-color-error-container);
   border-radius: 8px;
   padding: 10px 14px;
   font-size: 13px;
+}
+/* 每轮用量灰字(气泡下方,低调不打扰) */
+.usage-hint {
+  text-align: right;
+  font-size: 11px;
+  color: var(--md-sys-color-on-surface-variant);
+  opacity: 0.75;
+  padding: 0 4px 8px;
+  user-select: none;
 }
 .msg-tool {
   justify-content: flex-start;
@@ -328,9 +393,12 @@ body {
   background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
   border-radius: 12px;
-  padding: 2px 10px;
+  padding: 3px 10px;
   font-weight: 600;
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .tool-summary {
   overflow: hidden;
@@ -344,13 +412,29 @@ body {
   gap: 8px;
   align-items: flex-end;
   padding: 12px 16px 16px;
-  border-top: 1px solid var(--md-sys-color-outline-variant);
-  background: var(--md-sys-color-surface-container-low);
+  /* 一体感:无填充/边框,仅底部向上的渐变阴影 */
+  background: transparent;
+  border-top: none;
+  position: relative;
 }
+/* 底部渐变阴影(向上渐隐,悬浮于消息之上) */
+.chat-input-row::before {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  height: 16px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.12));
+}
+/* 输入框外容器(已无内嵌按钮,仅为 flex 布局保留) */
 .chat-input {
   flex: 1;
-  min-height: 48px;
-  max-height: 160px;
+  min-width: 0;
+  width: 100%;
+  min-height: 48px; /* 与发送按钮一致的高度 */
+  max-height: 192px; /* 4 倍 ≈ 8 行文本,JS 按内容动态伸缩 */
   resize: none;
   border: 1.5px solid var(--md-sys-color-outline);
   border-radius: 24px;
@@ -360,29 +444,170 @@ body {
   background: var(--md-sys-color-surface);
   color: var(--md-sys-color-on-surface);
   outline: none;
+  overflow-y: auto; /* 超 4 倍后内部滚动(无可见滚动条) */
+  /* 高度延展动画:JS 调整 height 时平滑过渡 */
+  transition: height 0.24s cubic-bezier(0.2, 0, 0.2, 1);
 }
 .chat-input:focus {
   border-color: var(--md-sys-color-primary);
 }
+/* 发送:圆形 filled 按钮 + 标准 send 图标 */
 .send-btn {
+  width: 48px;
   height: 48px;
-  padding: 0 24px;
+  padding: 0;
   border: none;
-  border-radius: 24px;
+  border-radius: 50%;
   background: var(--md-sys-color-primary);
   color: var(--md-sys-color-on-primary);
-  font-size: 15px;
-  font-weight: 700;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: filter 0.15s, transform 0.05s;
+  flex: none;
+}
+.send-btn:hover {
+  filter: brightness(1.08);
+}
+.send-btn:active {
+  transform: scale(0.94);
 }
 .send-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
+.icon-send {
+  font-size: 22px;
+}
+
+/* ============ Git diff 弹窗(独立阅读) ============ */
+.diff-window {
+  position: fixed;
+  inset: 20px;
+  z-index: 45;
+  background: var(--md-sys-color-surface-container-low);
+  border-radius: 20px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: pop-in 0.16s ease;
+}
+@media (max-width: 699px) {
+  .diff-window {
+    inset: 6px;
+    border-radius: 14px;
+  }
+}
+.dw-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container);
+}
+.dw-head-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dw-head-meta {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: var(--md-sys-color-primary);
+  font-weight: 700;
+}
+.dw-head-msg {
+  font-size: 13px;
+  color: var(--md-sys-color-on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dw-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.dw-files {
+  flex: none;
+  width: 240px;
+  min-width: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--md-sys-color-outline-variant);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--md-sys-color-surface-container);
+}
+.dw-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dw-message {
+  flex: none;
+  max-height: 96px;
+  overflow-y: auto;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--md-sys-color-on-surface);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  border-bottom: 1px dashed var(--md-sys-color-outline-variant);
+}
+.dw-lines {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 12.5px;
+}
+.dw-lines .dl {
+  padding: 0 10px;
+  min-width: 0;
+}
+.dl-text {
+  min-width: 0;
+  white-space: pre-wrap; /* 随窗口宽度自动换行 */
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 699px) {
+  .dw-body {
+    flex-direction: column;
+  }
+  .dw-files {
+    width: 100%;
+    max-height: 26%;
+    border-right: none;
+    border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  }
+  .dw-message {
+    max-height: 64px;
+  }
+}
+.dw-empty {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 13px;
+  text-align: center;
+  padding: 24px;
+}
 
 /* ============ 右侧栏 ============ */
 .right-panel {
   flex: 1;
+  min-width: 0; /* flex 子项默认 min-width:auto,长内容会撑破容器,必须归零才能换行/截断 */
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -448,17 +673,24 @@ body {
 
 .rp-history {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 .rp-commit-list {
-  flex: 1 1 50%;
+  flex: 1; /* 独立弹窗后列表占满整栏 */
+  min-width: 0;
   overflow-y: auto;
   padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+.hint-click {
+  font-size: 11px;
+  opacity: 0.8;
+  padding: 4px 0 10px;
 }
 .rp-commit {
   display: flex;
@@ -472,6 +704,7 @@ body {
   cursor: pointer;
   font-family: inherit;
   text-align: left;
+  min-width: 0;
 }
 .rp-commit.active {
   outline: 2px solid var(--md-sys-color-primary);
@@ -483,12 +716,13 @@ body {
   font-weight: 700;
 }
 .commit-msg {
+  width: 100%;
+  min-width: 0;
   font-size: 13px;
   color: var(--md-sys-color-on-surface);
-  white-space: nowrap;
+  white-space: nowrap; /* 超长 commit message 单行截断,完整版见右侧详情 */
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 100%;
 }
 .commit-meta {
   font-size: 11px;
@@ -496,6 +730,7 @@ body {
 }
 .rp-diff {
   flex: 1 1 50%;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
   border-top: 1px solid var(--md-sys-color-outline-variant);
@@ -503,6 +738,30 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+/* 选中的 commit 详情(完整 message 在此展示) */
+.rp-commit-detail {
+  flex: none;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--md-sys-color-surface-container);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rp-commit-detail-meta {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: var(--md-sys-color-primary);
+  font-weight: 700;
+}
+.rp-commit-detail-msg {
+  font-size: 13px;
+  color: var(--md-sys-color-on-surface);
+  white-space: pre-wrap; /* 完整 message,不截断,随屏宽换行 */
+  word-break: break-word;
+  line-height: 1.6;
 }
 .rp-diff-file-list {
   display: flex;
@@ -635,7 +894,9 @@ body {
 .scrim {
   position: fixed;
   inset: 0;
-  background: var(--md-sys-color-scrim);
+  /* 遮罩:半透明(25% 黑,约 75% 透光),避免太黑压过主界面 */
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(1.5px);
   z-index: 20;
 }
 .drawer {
@@ -706,7 +967,9 @@ body {
 .overlay {
   position: fixed;
   inset: 0;
-  background: var(--md-sys-color-scrim);
+  /* 弹窗遮罩与侧边栏 scrim 一致:半透明 + 背景模糊,不压黑主界面 */
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(2px);
   z-index: 30;
   display: flex;
   align-items: center;
@@ -749,6 +1012,35 @@ body {
   margin: 20px 0 8px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+/* 关于本工具 */
+.about-box {
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--md-sys-color-surface-container-low);
+}
+.about-name {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--md-sys-color-primary);
+}
+.about-line {
+  font-size: 13px;
+  color: var(--md-sys-color-on-surface);
+  word-break: break-all;
+}
+.about-line a {
+  color: var(--md-sys-color-primary);
+}
+.about-note {
+  font-size: 12px;
+  color: var(--md-sys-color-on-surface-variant);
+  margin-top: 2px;
+  line-height: 1.6;
 }
 .field-row {
   display: flex;

@@ -40,8 +40,13 @@ export function Bootstrap({ settings, onDone }: Props) {
     setErr('');
     setBusy(true);
     try {
-      // 先存 LLM 配置(标记引导完成)
-      let s = await api.saveLlm({ base_url: baseUrl.trim(), api_key: apiKey.trim(), model: model.trim() });
+      // 先存 LLM 配置(标记引导完成;窗口默认 128K,引导页不细设,设置里可改)
+      let s = await api.saveLlm({
+        base_url: baseUrl.trim(),
+        api_key: apiKey.trim(),
+        model: model.trim(),
+        context_window: 131072,
+      });
       // 再建工程
       if (name.trim()) {
         await api.createProject(name.trim(), desc.trim(), author.trim() || '匿名');

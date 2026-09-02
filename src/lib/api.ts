@@ -3,6 +3,7 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import type {
   AgentEvent,
   AppSettings,
+  ChatHistoryMsg,
   CommitInfo,
   FileDiff,
   LlmConfig,
@@ -22,6 +23,7 @@ export const api = {
   listProjects: () => invoke<ProjectInfo[]>('list_projects'),
   openProject: (name: string) => invoke<ProjectView>('open_project', { name }),
   currentProject: () => invoke<ProjectView | null>('current_project'),
+  chatHistory: () => invoke<ChatHistoryMsg[]>('chat_history'),
   gitLog: () => invoke<CommitInfo[]>('git_log'),
   gitDiff: (oldId: string | null, newId: string) =>
     invoke<FileDiff[]>('git_diff', { old: oldId, new: newId }),

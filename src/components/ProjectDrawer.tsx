@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import type { ProjectInfo } from '../lib/types';
+import { Icon } from './Icon';
 
 interface Props {
   open: boolean;
@@ -43,8 +44,12 @@ export function ProjectDrawer({ open, activeName, onClose, onOpen, onNew, onSett
           ))}
         </div>
         <div className="drawer-footer">
-          <button className="btn-tonal" onClick={() => { onNew(); onClose(); }}>＋ 新建工程</button>
-          <button className="btn-text" onClick={() => { onSettings(); onClose(); }}>⚙ 设置</button>
+          <button className="btn-tonal" onClick={() => { onNew(); onClose(); }}>
+            <Icon name="add" size="small" /> 新建工程
+          </button>
+          <button className="btn-text" onClick={() => { onSettings(); onClose(); }}>
+            <Icon name="settings" size="small" /> 设置
+          </button>
         </div>
       </div>
     </>

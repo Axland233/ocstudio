@@ -4,6 +4,13 @@ export interface LlmConfig {
   base_url: string;
   api_key: string;
   model: string;
+  /** 模型上下文窗口(token),用户按官方文档填,默认 128K。会话滚动阈值 = 70% × 此值 */
+  context_window: number;
+}
+
+export interface ChatHistoryMsg {
+  role: string; // user | assistant | tool
+  content: string;
 }
 
 export interface ThemeConfig {
@@ -70,4 +77,5 @@ export type AgentEvent =
   | { type: 'tool_start'; name: string }
   | { type: 'tool_done'; name: string; summary: string }
   | { type: 'done'; content: string }
+  | { type: 'usage'; turn_tokens: number; total_tokens: number }
   | { type: 'error'; message: string };

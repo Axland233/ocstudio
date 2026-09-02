@@ -27,3 +27,6 @@ dist-ssr
 src-tauri/target
 src-tauri/gen
 *.rs.bk
+
+# 字体源素材(仅本地;运行时字体已复制到 public/fonts)
+/fonts/

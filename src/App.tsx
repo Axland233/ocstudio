@@ -3,7 +3,8 @@ import { api } from './lib/api';
 import type { AppSettings, ProjectView } from './lib/types';
 import { initTheme } from './lib/themeApply';
 import { Bootstrap } from './components/Bootstrap';
-import { ChatPanel } from './components/ChatPanel';
+import { ChatPanel, historyToItems, type ChatItem } from './components/ChatPanel';
+import { Icon } from './components/Icon';
 import { RightPanel } from './components/RightPanel';
 import { ProjectDrawer } from './components/ProjectDrawer';
 import { NewProjectDialog } from './components/NewProjectDialog';
@@ -17,6 +18,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 900);
+  const [chatItems, setChatItems] = useState<ChatItem[]>([]);
+  const [chatEpoch, setChatEpoch] = useState(0);
   const stopWatchRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -32,7 +35,12 @@ export default function App() {
       setSettings(s);
       if (s.onboarded) {
         try {
-          setProject(await api.currentProject());
+          const p = await api.currentProject();
+          if (p) {
+            setProject(p);
+            const hist = await api.chatHistory();
+            setChatItems(historyToItems(hist));
+          }
         } catch {
           setProject(null);
         }
@@ -63,6 +71,14 @@ export default function App() {
 
   async function openProjectByName(name: string) {
     setProject(await api.openProject(name));
+    // 恢复该工程最新 session 的消息到聊天区(退出重开不丢)
+    try {
+      const hist = await api.chatHistory();
+      setChatItems(historyToItems(hist));
+    } catch {
+      setChatItems([]);
+    }
+    setChatEpoch((e) => e + 1);
   }
 
   if (!settings) return <div className="boot-loading">MindOC 加载中…</div>;
@@ -70,12 +86,18 @@ export default function App() {
 
   const headerRight = (
     <>
-      <button className="icon-btn" title="新建工程" onClick={() => setNewOpen(true)}>＋</button>
+      <button className="icon-btn" title="新建工程" onClick={() => setNewOpen(true)}>
+        <Icon name="add" />
+      </button>
       {isMobile ? (
         // 手机端:设置入口在侧边栏,右上角换成"设定集/Git 记录"面板入口
-        <button className="icon-btn" title="设定集 / Git 记录" onClick={() => setRightOpen(true)}>📖</button>
+        <button className="icon-btn" title="设定集 / Git 记录" onClick={() => setRightOpen(true)}>
+          <Icon name="book" />
+        </button>
       ) : (
-        <button className="icon-btn" title="设置" onClick={() => setSettingsOpen(true)}>⚙</button>
+        <button className="icon-btn" title="设置" onClick={() => setSettingsOpen(true)}>
+          <Icon name="settings" />
+        </button>
       )}
     </>
   );
@@ -84,7 +106,9 @@ export default function App() {
     <div className="app">
       {/* 顶栏 */}
       <header className="topbar">
-        <button className="icon-btn" title="工程列表" onClick={() => setDrawerOpen(true)}>☰</button>
+        <button className="icon-btn" title="工程列表" onClick={() => setDrawerOpen(true)}>
+          <Icon name="menu" />
+        </button>
         <div className="topbar-project" onClick={() => setDrawerOpen(true)}>
           {project?.info.name ?? '未选择工程'}
           <span className="topbar-desc">{project?.info.desc}</span>
@@ -97,7 +121,9 @@ export default function App() {
         <div className="main">
           <div className="chat-col">
             <ChatPanel
+              key={`${project.info.name}-${chatEpoch}`}
               projectName={project.info.name}
+              initialItems={chatItems}
               onSettingChange={() => void refreshProject()}
             />
           </div>
@@ -113,7 +139,9 @@ export default function App() {
             <div className="bootstrap-logo">MindOC</div>
             <div className="bootstrap-h">选择一个工程开始创作</div>
             <button className="btn-filled" onClick={() => setDrawerOpen(true)}>打开工程列表</button>
-            <button className="btn-tonal" onClick={() => setNewOpen(true)}>＋ 新建工程</button>
+            <button className="btn-tonal" onClick={() => setNewOpen(true)}>
+              <Icon name="add" size="small" /> 新建工程
+            </button>
           </div>
         </div>
       )}
