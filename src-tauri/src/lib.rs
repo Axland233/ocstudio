@@ -14,7 +14,7 @@ mod settings;
 mod tokenizer;
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{ipc::Channel, Manager, State};
@@ -23,6 +23,8 @@ use tauri_plugin_dialog::DialogExt;
 use agent::AgentEvent;
 use sessions::SessionStore;
 use settings::AppSettings;
+
+use agent::llm;
 
 /// 当前打开的工程(含当前 session 的消息;切换工程即切换)
 #[derive(Clone)]
@@ -42,6 +44,8 @@ struct ActiveProject {
 struct AppState {
     active: Mutex<Option<ActiveProject>>,
     http: reqwest::Client,
+    /// 对话停止信号:chat_stop 置位,chat_send 开始时复位(跨进程共享)
+    stop: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// 会话根目录:app_data/sessions/<工程名>
@@ -96,6 +100,13 @@ fn save_llm(app: tauri::AppHandle, llm: settings::LlmConfig) -> Result<AppSettin
     Ok(s)
 }
 
+/// 当前 workspace 根目录(用户设置的或默认位置),供设置页展示
+#[tauri::command]
+fn workspace_path(app: tauri::AppHandle) -> Result<String, String> {
+    let s = settings::load(&app);
+    Ok(settings::workspace_root(&app, &s).to_string_lossy().to_string())
+}
+
 /// 保存主题(模式 + 主题色种子)
 #[tauri::command]
 fn save_theme(app: tauri::AppHandle, theme: settings::ThemeConfig) -> Result<AppSettings, String> {
@@ -137,7 +148,17 @@ async fn pick_workspace(app: tauri::AppHandle) -> Result<Option<String>, String>
     }
     #[cfg(mobile)]
     {
-        Err("移动端请使用系统目录授权".into())
+        // Android:默认 workspace 在 app 私有目录(app_data_dir/workspace),
+        // 该目录本应用可直接读写,无需任何授权。返回它并保存,即"重置为默认目录"。
+        let mut s = settings::load(&app);
+        let default = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| e.to_string())?
+            .join("workspace");
+        s.workspace_dir = Some(default.to_string_lossy().to_string());
+        settings::save(&app, &s)?;
+        Ok(Some(s.workspace_dir.unwrap()))
     }
 }
 
@@ -295,7 +316,8 @@ async fn chat_send(
         let _ = channel.send(ev);
     };
 
-    let stats = agent::run_conversation(&state.http, &ctx, &mut history, &text, &emit).await?;
+    let stats =
+        agent::run_conversation(&state.http, &ctx, &mut history, &text, state.stop.clone(), &emit).await?;
 
     // ---- 落盘 + 累计(后端完成,前端无感) ----
     store.append_messages(session_seq, &history[len_before..])?;
@@ -330,7 +352,72 @@ async fn chat_send(
     Ok(())
 }
 
+/// 测试大模型连接:用当前(或传入)配置发一条极小请求,验证 地址/密钥/模型 全链路
+#[tauri::command]
+async fn test_connection(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    base_url: Option<String>,
+    api_key: Option<String>,
+    model: Option<String>,
+) -> Result<llm::TestResult, String> {
+    let s = settings::load(&app);
+    // 未传则用已保存配置(设置页传当前表单值,便于保存前先测)
+    let base = base_url.filter(|b| !b.trim().is_empty()).unwrap_or(s.llm.base_url);
+    let key = api_key.filter(|k| !k.trim().is_empty()).unwrap_or(s.llm.api_key);
+    let mdl = model.filter(|m| !m.trim().is_empty()).unwrap_or(s.llm.model);
+    if base.trim().is_empty() || key.trim().is_empty() || mdl.trim().is_empty() {
+        return Ok(llm::TestResult {
+            ok: false,
+            kind: "config".into(),
+            message: "请先完整填写 API 地址、密钥与模型名称".into(),
+            reply: None,
+            latency_ms: 0,
+        });
+    }
+    Ok(llm::test_connection(&state.http, &base, &key, &mdl).await)
+}
+
+/// 停止当前对话:置位停止信号,流式循环在最近安全点中断
+#[tauri::command]
+fn chat_stop(state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .stop
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
 // ---------------------------------------------------------------- helpers
+
+/// 构建全局 HTTP 客户端(Android 规避 rustls-platform-verifier 的 JVM 初始化依赖)
+fn build_http_client() -> reqwest::Client {
+    #[cfg(target_os = "android")]
+    {
+        // reqwest 默认 TLS 验证走 rustls-platform-verifier,在 Android 上需要向 JVM
+        // 注册初始化(Tauri 不做) -> 请求线程 panic,invoke 永不返回,
+        // 症状:无任何网络请求、无报错、永远"思考中"(reqwest#2966)。
+        // 修复:自建 rustls ClientConfig,根证书用内置 Mozilla CA(webpki-roots,
+        // 纯 Rust TrustAnchor,不需要 JVM),再以 use_preconfigured_tls 注入,
+        // 完全绕开 platform-verifier 分支。
+        use rustls::RootCertStore;
+
+        let mut roots = RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+        let config = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+
+        reqwest::Client::builder()
+            .use_preconfigured_tls(config)
+            .build()
+            .expect("failed to build http client")
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        reqwest::Client::new()
+    }
+}
 
 fn require_active(state: &State<'_, AppState>) -> Result<ActiveProject, String> {
     state
@@ -352,6 +439,31 @@ impl ActiveProject {
 
 // ---------------------------------------------------------------- entry
 
+/// 全局 AppHandle(JNI 静态导出里 emit 事件用;Android 专用)
+#[cfg(target_os = "android")]
+static APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+
+/// Android 返回键 JNI 导出:MainActivity.onBackPressed -> nativeBackPress()
+/// -> emit "back-press" 给前端(前端决定关浮层或调 back_exit 退出)
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_com_ocstudio_app_MainActivity_nativeBackPress(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) {
+    if let Some(handle) = APP_HANDLE.get() {
+        use tauri::Emitter;
+        let _ = handle.emit("back-press", ());
+    }
+}
+
+/// 前端确认退出(主页按返回时调用):结束 Activity
+#[tauri::command]
+fn back_exit(app: tauri::AppHandle) -> Result<(), String> {
+    app.exit(0);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -359,7 +471,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             active: Mutex::new(None),
-            http: reqwest::Client::new(),
+            // Android 上 reqwest 0.13 默认走 rustls-platform-verifier,
+            // 需要向 JVM 注册初始化(Tauri 不做) -> 请求线程 panic 且 invoke 永不返回,
+            // 症状:无任何网络请求、无报错、永远"思考中"(reqwest#2966)。
+            // 修复:Android 用内置 Mozilla CA(webpki-roots)+ tls_certs_only,不碰 JVM;
+            // 桌面端保持默认(平台证书验证)。
+            http: build_http_client(),
+            stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
         .invoke_handler(tauri::generate_handler![
             bootstrap,
@@ -367,6 +485,7 @@ pub fn run() {
             save_theme,
             save_github_token,
             pick_workspace,
+            workspace_path,
             create_project,
             list_projects,
             open_project,
@@ -376,7 +495,20 @@ pub fn run() {
             git_diff,
             set_remote,
             chat_send,
+            chat_stop,
+            test_connection,
+            back_exit,
         ])
+        .setup(|app| {
+            // Android 返回键:MainActivity.onBackPressed 直接经 JNI 调用
+            // ocstudio_lib 的静态导出 nativeBackPress -> emit "back-press" 给前端。
+            // 这里只负责把 AppHandle 存入全局(JNI 导出里 emit 用)。
+            #[cfg(target_os = "android")]
+            {
+                let _ = APP_HANDLE.set(app.handle().clone());
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -13,6 +13,15 @@ export interface ChatHistoryMsg {
   content: string;
 }
 
+export interface TestResult {
+  ok: boolean;
+  /** ok | config | auth | not_found | bad_request | rate_limit | timeout | dns | network | server | http | parse | empty */
+  kind: string;
+  message: string;
+  reply: string | null;
+  latency_ms: number;
+}
+
 export interface ThemeConfig {
   mode: 'system' | 'light' | 'dark';
   seed_color: string;

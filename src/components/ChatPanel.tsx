@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { chatSend } from '../lib/api';
+import { chatSend, api } from '../lib/api';
 import type { AgentEvent, ChatHistoryMsg } from '../lib/types';
 import { MdView } from './MdView';
 import { Icon } from './Icon';
@@ -150,6 +150,11 @@ export function ChatPanel({ projectName, initialItems, onSettingChange }: Props)
     }
   }
 
+  /** 停止生成:向后端发停止信号,流式循环在最近安全点中断 */
+  function stopGen() {
+    api.chatStop().catch(console.error);
+  }
+
   const canSend = !busy && input.trim().length > 0;
 
   return (
@@ -226,9 +231,16 @@ export function ChatPanel({ projectName, initialItems, onSettingChange }: Props)
             }
           }}
         />
-        <button className="send-btn" disabled={!canSend} onClick={() => void send()} aria-label="发送">
-          <Icon name="send" className="icon-send" />
-        </button>
+        {/* 生成中:发送按钮变停止按钮(红色,stop 图标) */}
+        {busy ? (
+          <button className="send-btn stop" onClick={stopGen} aria-label="停止">
+            <Icon name="stop" className="icon-send" />
+          </button>
+        ) : (
+          <button className="send-btn" disabled={!canSend} onClick={() => void send()} aria-label="发送">
+            <Icon name="send" className="icon-send" />
+          </button>
+        )}
       </div>
     </div>
   );

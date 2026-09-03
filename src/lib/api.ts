@@ -9,6 +9,7 @@ import type {
   LlmConfig,
   ProjectInfo,
   ProjectView,
+  TestResult,
   ThemeConfig,
 } from './types';
 
@@ -18,12 +19,17 @@ export const api = {
   saveTheme: (theme: ThemeConfig) => invoke<AppSettings>('save_theme', { theme }),
   saveGithubToken: (token: string) => invoke<AppSettings>('save_github_token', { token }),
   pickWorkspace: () => invoke<string | null>('pick_workspace'),
+  workspacePath: () => invoke<string>('workspace_path'),
+  backExit: () => invoke<void>('back_exit'),
   createProject: (name: string, desc: string, author: string) =>
     invoke<ProjectInfo>('create_project', { name, desc, author }),
   listProjects: () => invoke<ProjectInfo[]>('list_projects'),
   openProject: (name: string) => invoke<ProjectView>('open_project', { name }),
   currentProject: () => invoke<ProjectView | null>('current_project'),
   chatHistory: () => invoke<ChatHistoryMsg[]>('chat_history'),
+  chatStop: () => invoke<void>('chat_stop'),
+  testConnection: (baseUrl?: string, apiKey?: string, model?: string) =>
+    invoke<TestResult>('test_connection', { baseUrl, apiKey, model }),
   gitLog: () => invoke<CommitInfo[]>('git_log'),
   gitDiff: (oldId: string | null, newId: string) =>
     invoke<FileDiff[]>('git_diff', { old: oldId, new: newId }),

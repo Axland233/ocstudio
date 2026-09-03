@@ -52,6 +52,7 @@ fn chat_url(base: &str) -> String {
 /// 发起一轮流式请求。
 /// messages: OpenAI 格式历史消息;tools: 工具定义。
 /// 每个增量文本通过 `emit` 回调推送;函数返回完整结果(含 usage)。
+/// stop: 置为 true 时尽快中断(停止按钮),返回已收到的部分内容。
 pub async fn chat_stream(
     client: &reqwest::Client,
     base_url: &str,
@@ -59,6 +60,7 @@ pub async fn chat_stream(
     model: &str,
     messages: Vec<Value>,
     tools: Vec<Value>,
+    stop: &std::sync::atomic::AtomicBool,
     mut emit: impl FnMut(AgentEvent),
 ) -> Result<TurnResult, String> {
     let mut body = json!({
@@ -95,6 +97,10 @@ pub async fn chat_stream(
     let mut usage: Option<Usage> = None;
 
     while let Some(chunk) = stream.next().await {
+        // 停止信号:尽快退出流读取,保留已收到的内容
+        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
         let chunk = chunk.map_err(|e| format!("读取流失败: {e}"))?;
         buffer.extend_from_slice(&chunk);
 
@@ -237,6 +243,110 @@ fn parse_delta(
                 }
             }
         }
+    }
+}
+
+/// 连接测试结果(前端据此展示诊断)
+#[derive(Debug, Serialize)]
+pub struct TestResult {
+    pub ok: bool,
+    /// 分类:ok | auth(密钥无效) | not_found(地址/模型名不对) | timeout | network(无法连接) | server
+    pub kind: String,
+    pub message: String,
+    /// 模型实际回复(验证 key/模型/推理全链路,ok 时有值)
+    pub reply: Option<String>,
+    pub latency_ms: u64,
+}
+
+/// 测试用户填的 LLM 配置:发一条极小的非流式请求,验证 地址/密钥/模型 全链路。
+/// 用 max_tokens=16 控制成本,错误按类别归因,给出可操作的提示。
+pub async fn test_connection(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+) -> TestResult {
+    let start = std::time::Instant::now();
+    let body = json!({
+        "model": model,
+        "messages": [{"role": "user", "content": "回复\"连接成功\"四个字"}],
+        "max_tokens": 16,
+        "stream": false,
+    });
+
+    let resp = match client
+        .post(chat_url(base_url))
+        .bearer_auth(api_key)
+        .timeout(std::time::Duration::from_secs(30))
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = e.to_string();
+            let kind = if msg.contains("timed out") || msg.contains("timeout") {
+                "timeout"
+            } else if msg.contains("dns") || msg.contains("resolve") || msg.contains("Name or service") {
+                "dns"
+            } else {
+                "network"
+            };
+            let hint = match kind {
+                "timeout" => "请求超时:服务商无响应或网络不通/需要代理",
+                "dns" => "域名无法解析:检查 API 地址是否拼写正确",
+                _ => "无法建立连接:检查网络、API 地址,以及系统是否放行该应用联网",
+            };
+            return TestResult { ok: false, kind: kind.into(), message: format!("{msg} —— {hint}"), reply: None, latency_ms: start.elapsed().as_millis() as u64 };
+        }
+    };
+
+    let status = resp.status();
+    let latency = start.elapsed().as_millis() as u64;
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        let kind = match status.as_u16() {
+            401 | 403 => "auth",
+            404 => "not_found",
+            400 => "bad_request",
+            429 => "rate_limit",
+            _ => if status.is_server_error() { "server" } else { "http" },
+        };
+        let hint = match kind {
+            "auth" => "密钥无效或没有权限:检查 API Key 是否正确、账户是否有该模型的访问权限",
+            "not_found" => "接口或模型不存在:检查 API 地址(通常以 /v1 结尾)与模型名称拼写",
+            "bad_request" => "请求被拒绝:通常是模型名称不正确,请按服务商文档核对",
+            "rate_limit" => "触发限流:请求过于频繁或余额不足,稍后再试",
+            "server" => "服务商服务器错误:稍后再试",
+            _ => "请求失败",
+        };
+        return TestResult { ok: false, kind: kind.into(), message: format!("HTTP {status}: {} —— {hint}", truncate(&text, 200)), reply: None, latency_ms: latency };
+    }
+
+    // 成功:提取模型回复
+    match resp.json::<Value>().await {
+        Ok(v) => {
+            let reply = v
+                .pointer("/choices/0/message/content")
+                .and_then(|c| c.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let ok = !reply.is_empty();
+            TestResult {
+                ok,
+                kind: if ok { "ok".into() } else { "empty".into() },
+                message: if ok { "连接成功".into() } else { "连接成功但模型回复为空,请核对模型名称".into() },
+                reply: if ok { Some(reply) } else { None },
+                latency_ms: latency,
+            }
+        }
+        Err(e) => TestResult {
+            ok: false,
+            kind: "parse".into(),
+            message: format!("响应不是有效的 OpenAI 兼容格式: {e} —— 确认 API 地址是否为 /v1/chat/completions 兼容接口"),
+            reply: None,
+            latency_ms: latency,
+        },
     }
 }
 

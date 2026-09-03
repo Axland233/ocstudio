@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { api } from '../lib/api';
-import type { AppSettings } from '../lib/types';
+import type { AppSettings, TestResult } from '../lib/types';
+import { Icon } from './Icon';
 
 interface Props {
   open: boolean;
@@ -8,11 +10,13 @@ interface Props {
   projectName: string | null;
   onClose: () => void;
   onSaved: (s: AppSettings) => void;
+  /** 工程目录变更成功(需要上层刷新工程列表/当前工程) */
+  onWorkspaceChanged?: () => void;
 }
 
 const SEED_PRESETS = ['#6750A4', '#006A6A', '#8B5000', '#B3261E', '#006C4C', '#3F51B5', '#7D5260'];
 
-export function SettingsDialog({ open, settings, projectName, onClose, onSaved }: Props) {
+export function SettingsDialog({ open, settings, projectName, onClose, onSaved, onWorkspaceChanged }: Props) {
   const [mode, setMode] = useState(settings.theme.mode);
   const [seed, setSeed] = useState(settings.theme.seed_color);
   const [baseUrl, setBaseUrl] = useState(settings.llm.base_url);
@@ -21,6 +25,9 @@ export function SettingsDialog({ open, settings, projectName, onClose, onSaved }
   const [ctxWindow, setCtxWindow] = useState(settings.llm.context_window ?? 131072);
   const [remoteUrl, setRemoteUrl] = useState('');
   const [token, setToken] = useState(settings.github.token);
+  const [wsPath, setWsPath] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [err, setErr] = useState('');
   const [savedTip, setSavedTip] = useState('');
 
@@ -36,6 +43,10 @@ export function SettingsDialog({ open, settings, projectName, onClose, onSaved }
     setToken(settings.github.token);
     setErr('');
     setSavedTip('');
+    setTestResult(null);
+    setTesting(false);
+    // 当前 workspace 路径(展示用)
+    api.workspacePath().then(setWsPath).catch(() => setWsPath(''));
     // 当前工程 remote
     if (projectName) {
       api.currentProject().then((v) => setRemoteUrl(v?.info.remote_url ?? '')).catch(() => setRemoteUrl(''));
@@ -43,6 +54,35 @@ export function SettingsDialog({ open, settings, projectName, onClose, onSaved }
   }, [open, settings, projectName]);
 
   if (!open) return null;
+
+  async function changeWorkspace() {
+    setErr('');
+    try {
+      const picked = await api.pickWorkspace();
+      if (picked) {
+        setWsPath(picked);
+        setSavedTip('工程目录已更改,工程列表已刷新');
+        onWorkspaceChanged?.();
+      }
+    } catch (e) {
+      setErr(String(e));
+    }
+  }
+
+  /** 测试连接:用表单当前值(未保存也可测)发一条极小请求 */
+  async function testConn() {
+    setErr('');
+    setTestResult(null);
+    setTesting(true);
+    try {
+      const r = await api.testConnection(baseUrl, apiKey, model);
+      setTestResult(r);
+    } catch (e) {
+      setTestResult({ ok: false, kind: 'invoke', message: String(e), reply: null, latency_ms: 0 });
+    } finally {
+      setTesting(false);
+    }
+  }
 
   async function saveTheme() {
     const s = await api.saveTheme({ mode, seed_color: seed });
@@ -73,6 +113,15 @@ export function SettingsDialog({ open, settings, projectName, onClose, onSaved }
     <div className="overlay" onClick={onClose}>
       <div className="dialog dialog-wide" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-title">设置</div>
+
+        <div className="sec-title">工程目录</div>
+        <div className="ws-row">
+          <div className="ws-path" title={wsPath}>{wsPath || '加载中…'}</div>
+          <button className="btn-tonal" onClick={() => void changeWorkspace()}>
+            更改目录…
+          </button>
+        </div>
+        <div className="hint">所有工程(git 仓库)存放在此目录下。更改后请从工程列表重新打开工程。</div>
 
         <div className="sec-title">外观</div>
         <div className="field-row">
@@ -114,7 +163,21 @@ export function SettingsDialog({ open, settings, projectName, onClose, onSaved }
           onChange={(e) => setCtxWindow(Number(e.target.value))}
         />
         <div className="hint">按模型官方文档填写(默认 128K;例如 1M 窗口填 1048576)。仅用于自动延续会话的阈值判断,不影响对话本身。</div>
-        <button className="btn-tonal" onClick={() => void saveLlm()}>保存模型配置</button>
+        <div className="field-row" style={{ gap: 10 }}>
+          <button className="btn-tonal" disabled={testing} onClick={() => void testConn()}>
+            <Icon name={testing ? 'progress_activity' : 'network_check'} size="small" /> {testing ? '测试中…' : '测试连接'}
+          </button>
+          <button className="btn-tonal" onClick={() => void saveLlm()}>保存模型配置</button>
+        </div>
+        {testResult && (
+          <div className={testResult.ok ? 'test-ok' : 'test-fail'}>
+            <Icon name={testResult.ok ? 'check_circle' : 'error'} size="small" />
+            <div>
+              <div>{testResult.message}{testResult.latency_ms > 0 ? `(${testResult.latency_ms}ms)` : ''}</div>
+              {testResult.ok && testResult.reply && <div className="test-reply">模型回复:{testResult.reply}</div>}
+            </div>
+          </div>
+        )}
 
         <div className="sec-title">GitHub 备份({projectName ? `工程:${projectName}` : '未打开工程'})</div>
         <label className="field-label">远程仓库地址</label>
@@ -132,13 +195,25 @@ export function SettingsDialog({ open, settings, projectName, onClose, onSaved }
           <div className="about-line">版本 v0.1.0(原型)· 设定集共创工作台</div>
           <div className="about-line">
             项目地址:
-            <a href="https://github.com/Axland233/ocstudio" target="_blank" rel="noreferrer">
+            <a
+              href="https://github.com/Axland233/ocstudio"
+              onClick={(e) => {
+                e.preventDefault();
+                void openUrl('https://github.com/Axland233/ocstudio');
+              }}
+            >
               github.com/Axland233/ocstudio
             </a>
           </div>
           <div className="about-line">
             开源协议:
-            <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noreferrer">
+            <a
+              href="https://www.apache.org/licenses/LICENSE-2.0"
+              onClick={(e) => {
+                e.preventDefault();
+                void openUrl('https://www.apache.org/licenses/LICENSE-2.0');
+              }}
+            >
               Apache License 2.0
             </a>
           </div>

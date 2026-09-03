@@ -11,6 +11,8 @@ pub mod tools;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::sessions::SessionStore;
 use llm::{Usage, chat_simple};
@@ -64,11 +66,13 @@ pub struct TurnStats {
 const MAX_TURNS: usize = 10;
 
 /// 运行一轮对话(用户一条消息)。history 为可变历史,运行后已更新。
+/// stop: 前端"停止按钮"置位后,在最近的安全点中断(返回 Ok,内容可能不完整)。
 pub async fn run_conversation(
     http: &reqwest::Client,
     ctx: &AgentCtx,
     history: &mut Vec<Value>,
     user_text: &str,
+    stop: Arc<AtomicBool>,
     emit: &impl Fn(AgentEvent),
 ) -> Result<TurnStats, String> {
     let system = json!({
@@ -90,6 +94,11 @@ pub async fn run_conversation(
     let mut stats = TurnStats::default();
 
     for _turn in 0..MAX_TURNS {
+        // 停止信号:本轮已在安全点,直接结束(不再发起新请求)
+        if stop.load(Ordering::Relaxed) {
+            emit(AgentEvent::Done { content: String::new() });
+            break;
+        }
         // 组装 messages:system 在每轮都带上(工程信息可能变化,且实现最简单)
         let mut messages = vec![system.clone()];
         messages.extend(history.iter().cloned());
@@ -101,6 +110,7 @@ pub async fn run_conversation(
             &ctx.llm_model,
             messages,
             tools::tool_specs(),
+            &stop,
             |ev| emit(ev),
         )
         .await?;
@@ -144,6 +154,11 @@ pub async fn run_conversation(
 
         // 逐个执行工具,结果作为 tool 消息回传
         for tc in &result.tool_calls {
+            // 停止信号:不再执行后续工具,结束本轮
+            if stop.load(Ordering::Relaxed) {
+                emit(AgentEvent::Done { content: String::new() });
+                return Ok(stats);
+            }
             emit(AgentEvent::ToolStart { name: tc.name.clone() });
 
             // 解析参数 JSON(模型可能给不完整 JSON,容错)

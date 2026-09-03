@@ -32,7 +32,18 @@
 }
 
 :root {
-  /* 兜底 token(主题脚本应用前/后都会覆盖) */
+  /* 安全区(手机状态栏/手势条避让);桌面均为 0 */
+  --safe-top: 0px;
+  --safe-bottom: 0px;
+}
+@media (max-width: 900px) {
+  /* 手机:顶栏至少下沉 28px 防状态栏遮挡;底部避让手势条 */
+  :root {
+    --safe-top: max(28px, env(safe-area-inset-top, 0px));
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+:root {
   --md-sys-color-primary: #6750a4;
   --md-sys-color-on-primary: #ffffff;
   --md-sys-color-primary-container: #eaddff;
@@ -215,6 +226,8 @@ body {
   height: 100%;
   display: flex;
   flex-direction: column;
+  /* 顶栏整体下沉:手机状态栏避让(桌面 = 0) */
+  padding-top: var(--safe-top);
 }
 
 .topbar {
@@ -416,6 +429,8 @@ body {
   background: transparent;
   border-top: none;
   position: relative;
+  /* 底部安全区(手势条避让,桌面 = 0) */
+  padding-bottom: calc(16px + var(--safe-bottom));
 }
 /* 底部渐变阴影(向上渐隐,悬浮于消息之上) */
 .chat-input-row::before {
@@ -479,6 +494,39 @@ body {
 }
 .icon-send {
   font-size: 22px;
+}
+/* 停止按钮:生成中替换发送按钮(error 色, filled) */
+.send-btn.stop {
+  background: var(--md-sys-color-error);
+  color: var(--md-sys-color-on-error);
+}
+/* 测试连接结果条 */
+.test-ok,
+.test-fail {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.test-ok {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.test-fail {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+.test-ok .md-icon,
+.test-fail .md-icon {
+  margin-top: 1px;
+}
+.test-reply {
+  margin-top: 2px;
+  opacity: 0.85;
+  font-size: 12px;
 }
 
 /* ============ Git diff 弹窗(独立阅读) ============ */
@@ -911,6 +959,9 @@ body {
   flex-direction: column;
   box-shadow: var(--elevation-1);
   animation: slide-in-left 0.2s ease;
+  /* 状态栏/手势条避让 */
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
 }
 @keyframes slide-in-left {
   from { transform: translateX(-100%); }
@@ -1005,6 +1056,28 @@ body {
   gap: 8px;
   margin-top: 16px;
 }
+/* 工程目录行 */
+.ws-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ws-path {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  color: var(--md-sys-color-on-surface-variant);
+  background: var(--md-sys-color-surface-container-high);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: break-all;
+}
+
+/* 外观设置 */
 .sec-title {
   font-size: 13px;
   font-weight: 800;
@@ -1174,6 +1247,9 @@ input[type='color'] {
   transition: transform 0.22s ease;
   box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
   display: flex;
+  /* 状态栏/手势条避让 */
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
 }
 .mobile-right.open {
   transform: translateX(0);
