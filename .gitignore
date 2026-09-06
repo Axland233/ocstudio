@@ -17,3 +17,7 @@ build/
 !.vscode/extensions.json
 .DS_Store
 *.log
+
+# local build/test logs
+build-log.txt
+test-log.txt
