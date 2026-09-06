@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import java.io.File
 
@@ -11,6 +12,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         val vm = AppViewModel(filesDir)
         ToastProxy.show = { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
         setContent { App(vm) }

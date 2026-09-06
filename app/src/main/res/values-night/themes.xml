@@ -1,0 +1,9 @@
+<resources>
+    <!-- 深色主题:窗口背景深色(修复深色模式启动闪白/IME 露白/弹窗浅色遮罩) -->
+    <style name="Theme.GitMind" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/background_dark</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

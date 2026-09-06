@@ -1,6 +1,7 @@
 package com.yehenowo.gitmind.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -100,7 +101,7 @@ private fun MessageBubble(item: ChatItem) {
     var entered by remember { mutableStateOf(false) }
     val progress by animateFloatAsState(
         targetValue = if (entered) 1f else 0f,
-        animationSpec = tween(350, easing = FastOutSlowInEasing),
+        animationSpec = tween(400, easing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)), // MD3 emphasized decelerate
         label = "enter",
     )
     LaunchedEffect(Unit) { entered = true }

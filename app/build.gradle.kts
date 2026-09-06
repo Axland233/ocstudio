@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.yehenowo.gitmind"
-    compileSdk = 36
+    compileSdk = 37  // MaterialKolor 5.x 要求 37;AGP9.1+37 组合已在 EdifierPods prototype 验证
 
     defaultConfig {
         applicationId = "com.yehenowo.gitmind"
@@ -63,6 +63,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    implementation("com.materialkolor:material-kolor:5.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
     // LLM 网络层(OpenAI 兼容 SSE)
