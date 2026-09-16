@@ -60,10 +60,9 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
-    implementation("com.materialkolor:material-kolor:5.0.1")
+    implementation("com.materialkolor:material-kolor:4.0.5")  // 5.0.1 依赖 JB m3 1.12 构造器,与 BOM 2025.05(material3 1.3.2) 运行时不兼容→闪退
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
     // LLM 网络层(OpenAI 兼容 SSE)

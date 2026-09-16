@@ -66,10 +66,21 @@ class JGitRepo {
             headId?.let { commit.setParentId(it) }
             val commitId = inserter.insert(commit)
             inserter.flush()
-            // HEAD 是 symref,update 会跟随到当前分支(refs/heads/...),分支不存在时自动创建
-            val refUpdate = repo.updateRef("HEAD")
+            // HEAD 是 symref:未出生分支(首个 commit 前)下直接 update HEAD 是静默 no-op,
+            // 必须写 symref 指向的叶子 ref(refs/heads/master|main);分支已存在时等价
+            val headRef = repo.exactRef("HEAD")
+            val leaf = headRef?.takeIf { it.isSymbolic }?.target?.name ?: "HEAD"
+            val refUpdate = repo.updateRef(leaf)
             refUpdate.setNewObjectId(commitId)
-            refUpdate.update()
+            // RefUpdate.Result 没有 isSuccessful():成功态 = NEW/FAST_FORWARD/FORCED(NO_CHANGE=指向未变,无害)
+            val st = refUpdate.update()
+            when (st) {
+                org.eclipse.jgit.lib.RefUpdate.Result.NEW,
+                org.eclipse.jgit.lib.RefUpdate.Result.FAST_FORWARD,
+                org.eclipse.jgit.lib.RefUpdate.Result.FORCED,
+                org.eclipse.jgit.lib.RefUpdate.Result.NO_CHANGE -> Unit
+                else -> throw IllegalStateException("git ref 更新失败: $st")
+            }
             return commitId.abbreviate(8).name()
         }
     }

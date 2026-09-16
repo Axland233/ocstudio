@@ -71,8 +71,8 @@ class AppViewModel(private val filesDir: File) {
 
     fun createProject(name: String, desc: String, author: String): Result<ProjectInfo> = runCatching {
         createProject(workspaceRoot(), name, desc, author, git)
-    }.onSuccess {
-        openProject(name)
+    }.onSuccess { info ->
+        openProject(info.name).onFailure { toast = "工程已创建,但打开失败: ${it.message}" }
     }
 
     fun openProject(name: String): Result<Unit> = runCatching {

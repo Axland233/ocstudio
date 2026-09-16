@@ -20,50 +20,8 @@ import java.util.Date
 import java.util.Locale
 
 // Git 历史 + Diff 阅读弹窗。
-// 对应 legacy RightPanel(Git 记录 tab)+ DiffDialog:提交列表 -> 点开独立弹窗看逐行 diff。
-
-@Composable
-fun GitPanel(vm: AppViewModel, modifier: Modifier = Modifier) {
-    var log by remember { mutableStateOf(listOf<CommitInfo>()) }
-    var dlg by remember { mutableStateOf<CommitInfo?>(null) }
-
-    LaunchedEffect(vm.project?.info?.updated_at) { log = vm.gitLog() }
-
-    Column(modifier) {
-        Text(
-            "Git 记录",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(16.dp),
-        )
-        if (log.isEmpty()) {
-            Text("暂无提交", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
-        }
-        LazyColumn {
-            itemsIndexed(log) { i, c ->
-                Column(
-                    Modifier.fillMaxWidth().clickable { dlg = c }.padding(horizontal = 16.dp, vertical = 8.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(c.id, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(8.dp))
-                        Text(c.message, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                    }
-                    Text(
-                        "${c.author} · ${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(c.time_secs * 1000))}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (i < log.size - 1) HorizontalDivider()
-            }
-        }
-    }
-
-    dlg?.let { commit ->
-        val olderId = log.getOrNull(log.indexOf(commit) + 1)?.id
-        DiffDialog(vm, commit, olderId) { dlg = null }
-    }
-}
+// 顶层 Git 历史列表已并入 CollectionPanel 右栏;这里保留 DiffDialog 供其复用:
+// 提交列表 -> 点开独立弹窗看逐行 diff。
 
 /** Diff 阅读弹窗(大空间,列表选文件,逐行展示) */
 @Composable

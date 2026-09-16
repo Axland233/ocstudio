@@ -84,11 +84,11 @@ fun ChatPanel(vm: AppViewModel, projectName: String, modifier: Modifier = Modifi
             Spacer(Modifier.width(8.dp))
             if (vm.busy) {
                 FilledIconButton(onClick = { vm.stopGen() }, colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)) {
-                    Text("■")
+                    MsIcon("stop", filled = true)
                 }
             } else {
                 FilledIconButton(onClick = { vm.send(input.trim()); input = "" }, enabled = input.isNotBlank()) {
-                    Text("➤")
+                    MsIcon("send", filled = true)
                 }
             }
         }

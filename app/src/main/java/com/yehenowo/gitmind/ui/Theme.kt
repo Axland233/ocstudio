@@ -6,6 +6,8 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
@@ -26,6 +28,9 @@ import com.materialkolor.rememberDynamicColorScheme
 private val LightFallback = lightColorScheme()
 private val DarkFallback = darkColorScheme()
 
+/** seed_color 的特殊值:跟随系统动态取色(Monet)。旧数据的 #RRGGBB 继续作为自定义色生效。 */
+const val THEME_AUTO = "monet"
+
 @Composable
 fun GitMindTheme(mode: String, seedColor: String, content: @Composable () -> Unit) {
     val dark = when (mode) {
@@ -35,14 +40,17 @@ fun GitMindTheme(mode: String, seedColor: String, content: @Composable () -> Uni
     }
     val context = LocalContext.current
 
+    // seed_color = "monet" 表示跟随系统动态取色;其他值为用户选定的种子色
+    // (用户选色时所有系统版本都走 MaterialKolor,保证深浅色/取色行为一致)
+    val useMonet = seedColor == THEME_AUTO
+
     val scheme: ColorScheme = when {
-        // Android 12+:动态取色已自带完整深浅方案
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
-            if (dark) androidx.compose.material3.dynamicDarkColorScheme(context)
-            else androidx.compose.material3.dynamicLightColorScheme(context)
-        // 低版本:从种子色生成 tonal 方案(深色自动取 tone 80,对比度合规)
+        useMonet && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+            // Android 12+ 跟随系统:动态取色自带完整深浅方案
+            if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         else -> {
-            // 种子解析容错(非组合操作可 try);组合函数不能进 runCatching
+            // 种子色方案:低版本唯一途径;高版本作为"自定义颜色"覆盖 monet
+            // (深色自动取 tone 80,对比度合规)
             val seed = runCatching { Color(android.graphics.Color.parseColor(seedColor)) }
                 .getOrElse { Color(0xFF6750A4) }
             rememberDynamicColorScheme(seedColor = seed, isDark = dark, isAmoled = false)
